@@ -1,5 +1,6 @@
 mod node;
 
+use std::fmt::Display;
 use std::hash::Hash;
 use crate::node::Node;
 
@@ -21,7 +22,7 @@ pub struct UkkonenTree<'a, T> {
 }
 
 
-impl<'a, T: Eq + Hash> UkkonenTree<'a, T> {
+impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
     pub fn new(sequence: &'a [T]) -> Self {
 
         // Create a root node
@@ -57,7 +58,8 @@ impl<'a, T: Eq + Hash> UkkonenTree<'a, T> {
         }
 
         let active_child = Rc::clone(children.get(&element).unwrap());
-        // Drop the borrow to children explicitly. Otherwise we won't be able to assign active node
+        // Drop the borrow to children explicitly.
+        // Otherwise compiler won't let us assign the active node
         drop(children);
 
         let edge_length = active_child.end_idx.unwrap() - *active_child.start_idx.borrow();
@@ -199,8 +201,86 @@ impl<'a, T: Eq + Hash> UkkonenTree<'a, T> {
         }
     }
 
-    pub fn find(&self, pattern: &[T]) -> Option<Vec<(usize, usize)>> {
-        // todo
-        None
+    fn dfs(&self, node: Rc<Node<'a, T>>, result: &mut Vec<usize>){
+        if node.children.borrow().len() == 0 {
+            result.push(node.start_idx.borrow().clone());
+        } else {
+            for child in node.children.borrow().values() {
+                self.dfs(Rc::clone(child), result);
+            }
+        }
+    }
+
+    fn bfs_print(&self, node: Rc<Node<'a, T>>, depth: usize) {
+        let idx = node.start_idx.borrow().clone();
+        println!("{}{}", " ".repeat(depth*4), self.sequence[idx]);
+
+        println!("{}{}", " ".repeat(depth*4), node.children.borrow().len());
+        for child in node.children.borrow().values() {
+            self.bfs_print(Rc::clone(child), depth + 1);
+        }
+    }
+
+    pub fn find(&self, pattern: &[T]) -> Vec<usize> {
+        let mut result = Vec::new();
+
+        let mut node = Rc::clone(&self.root);
+        let mut pattern_start = 0;
+
+        self.bfs_print(Rc::clone(&node), 0);
+
+        loop {
+            // println!("{}", pattern_start);
+            let child = {
+                let children = node.children.borrow();
+                // for child in children.values() {
+                //     print!("{} ", self.sequence[child.start_idx.borrow().clone()]);
+                // }
+                if let Some(child) = children.get(pattern.get(pattern_start).unwrap()) {
+                    Some(Rc::clone(child))
+                } else {
+                    None
+                }
+            };
+
+            if let None = child { break; }
+
+            let child = child.unwrap();
+
+            let seq_start = child.start_idx.borrow().clone();
+
+
+            let seq_end = match child.end_idx {
+                Some(end) => end,
+                None => self.sequence.len()
+            };
+
+            let seq_len = seq_end - seq_start;
+
+            let (pattern_end, walk_down) = {
+                if pattern_start + seq_len < pattern.len() {
+                    (seq_start + seq_len, true)
+                } else {
+                    (pattern.len(), false)
+                }
+            };
+
+            let subseq = self.sequence[seq_start..seq_end].iter().copied();
+            let sub_pattern = pattern[pattern_start..pattern_end].iter();
+
+            if subseq.eq(sub_pattern) {
+                if walk_down {
+                    node = child;
+                    pattern_start += seq_len;
+                    continue
+                }
+                self.dfs(child, &mut result);
+            }
+
+            break;
+
+        }
+        println!("");
+        result
     }
 }
