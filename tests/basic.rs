@@ -5,6 +5,7 @@ use rust_ukkonen::UkkonenTree;
 fn basic_string_search() {
     let text: Vec<char> = "babcababx".chars().collect();
     let st = UkkonenTree::new(&text);
+    st.print_tree();
 
     let pattern: Vec<char> = "ab".chars().collect();
 

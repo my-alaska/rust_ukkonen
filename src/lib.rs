@@ -21,7 +21,6 @@ pub struct UkkonenTree<'a, T> {
     sequence: Vec<&'a T>,
 }
 
-
 impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
     pub fn new(sequence: &'a [T]) -> Self {
 
@@ -220,6 +219,9 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
     }
 
     fn bfs_print(&self, node: Rc<Node<'a, T>>, node_depth: usize, depth: usize) {
+        let idx = node.start_idx.borrow().clone();
+        println!("{}{} {}", " ".repeat(node_depth*4),self.sequence[idx], depth);
+
         for child in node.children.borrow().values() {
             let start = *child.start_idx.borrow();
             let end = {
@@ -234,13 +236,15 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
         }
     }
 
+    pub fn print_tree(&self) {
+        self.bfs_print(Rc::clone(&self.root), 0, 0);
+    }
+
     pub fn find(&self, pattern: &[T]) -> Vec<usize> {
         let mut result = Vec::new();
 
         let mut node = Rc::clone(&self.root);
         let mut pattern_start = 0;
-
-        self.bfs_print(Rc::clone(&node), 0,0);
 
         let mut depth = 0;
         loop {
