@@ -310,19 +310,31 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
             let seq_len = seq_end - seq_start;
             depth += seq_len;
 
-            let (pattern_end, walk_down) = {
+            let (seq_end, pattern_end, walk_down) = {
                 println!("{} {} {}", pattern_start, seq_len, pattern.len());
                 if pattern.len() - pattern_start > seq_len  {
-                    (pattern_start + seq_len, true)
+                    (seq_end, pattern_start + seq_len, true)
                 } else {
-                    (pattern.len(), false)
+                    (seq_start + pattern.len() - pattern_start,pattern.len(), false)
                 }
             };
 
-            let subseq = self.sequence[seq_start..seq_end].iter().copied();
+
+
+            let subseq = self.sequence[seq_start..seq_end].iter();
             let sub_pattern = pattern[pattern_start..pattern_end].iter();
 
-            if subseq.eq(sub_pattern) {
+            for t in self.sequence[seq_start..seq_end].iter() {
+                print!("{}", t);
+            };
+            println!("");
+
+            for t in pattern[pattern_start..pattern_end].iter() {
+                print!("{}", t);
+            };
+            println!("");
+
+            if subseq.copied().eq(sub_pattern) {
                 if walk_down {
                     node = child;
                     pattern_start += seq_len;
