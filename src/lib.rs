@@ -47,16 +47,11 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
     }
 
     fn walk_down(&mut self) -> bool {
-        println!("walking down");
         let element = self.sequence[self.active_edge.unwrap()];
 
         let children = self.active_node.children.borrow();
 
-        if !children.contains_key(element) {
-
-            println!("walk down failed - no child in keys");
-            return false;
-        }
+        if !children.contains_key(element) { return false; }
 
         let active_child = Rc::clone(children.get(&element).unwrap());
         // Drop the borrow to children explicitly.
@@ -71,13 +66,9 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
                 self.active_length -= edge_length;
                 self.active_node = active_child;
 
-                println!("walk down successful");
                 return true
             }
-            println!("walk down failed - leaf node");
         }
-
-        println!("walk down failed");
         false
     }
 
@@ -102,9 +93,6 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
 
     // This method can be used to extend existing tree with new elements
     pub fn extend_tree(&mut self, element: &'a T) {
-        println!();
-        println!("creating node for element {}", element);
-
         self.sequence.push(element);
 
         // initialize the checker for the most recently created node
@@ -114,30 +102,15 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
         // It's the number of characters to process or implicitly stored
         self.remainder += 1;
         while self.remainder > 0 {
-            println!("starting loop with: ");
-            if let Some(active_edge) = self.active_edge {
-                println!("    active edge: {} ", self.sequence[active_edge]);
-            } else {
-                println!("    active edge: None ");
-            }
-            println!("    remainder: {}", self.remainder);
-            println!("    active length: {}",self.active_length);
-
-
             if self.active_length == 0 {
                 // If active length is 0 we select active edge
                 self.active_edge = Some(self.sequence.len() - 1);
-
-                println!("active length is zero!");
-                println!("active edge updated to {}", self.sequence[self.active_edge.unwrap()]);
             }
 
             // If the active node doesn't have edge corresponding to our letter
             if self.active_length == 0 && !self.active_node.children.borrow().contains_key(element){
-                println!("element NOT found in active node keys");
                 // create a new child node and edge that does
 
-                println!("creating node with index {} for element {}", self.sequence.len() - 1, element);
                 // initialize node
                 let new_node = Node::new(self.sequence.len() - 1);
                 let new_node = Rc::new(new_node);
@@ -150,15 +123,12 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
                 // If new node was created in previous iterations
                 // create a special link from it to current active node
                 if !Rc::ptr_eq(&self.root, &self.active_node){
-                    println!("creating a special link");
-
                     self.link_created_node(last_created_node, self.active_node.clone());
                     last_created_node = None;
                 }
 
             // If there is active length
             } else {
-                println!("element found in active node keys");
 
                 // check if we can "walk down" - active length is greater than the length of edge below
                 // If we walk down we have to process the beginning of the loop
@@ -172,22 +142,15 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
                 // In case our new letter is already implicitly represented on the active edge
                 // We want to update active length (and create a link if need be)
                 // We break out of the loop here. It's the default case of implicit extension
-                println!("active child start is at index {}",*active_child.start_idx.borrow());
 
                 if self.sequence[*active_child.start_idx.borrow() + self.active_length] == element {
-                    println!("active sequence extended implicitly");
-
                     // Update link of last_created_node
                     self.link_created_node(last_created_node,self.active_node.clone());
-
-
                     self.active_length += 1;
-                    println!("active length incremented to {}", self.active_length);
                     break;
                 }
 
                 // Otherwise we have to break the path
-                println!("breaking the path!");
 
                 // create a new node with proper beginning and ending index
                 let new_node_start = *active_child.start_idx.borrow();
@@ -217,14 +180,11 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
             drop(self.active_node.children.borrow_mut());
 
             self.remainder -= 1;
-            println!("remainder decremented to {}", self.remainder);
 
             // If root is the active node at this point it means we inserted a new node or leaf from it
 
             // If root is the active edge, and the active length is nonzero:
             if Rc::ptr_eq(&self.root, &self.active_node) && self.active_length > 0{
-                println!("lowering the remainder");
-
                 // Select the active edge on the root using the 2nd character of active sequence
                 self.active_edge = Some(self.sequence.len() - self.remainder);
 
@@ -238,8 +198,6 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
     }
 
     fn dfs(&self, node: Rc<Node<'a, T>>, depth: usize,result: &mut Vec<usize>){
-        println!("element: {}", self.sequence[*node.start_idx.borrow()]);
-
         if node.children.borrow().len() == 0 {
             result.push(self.sequence.len() - depth);
         } else {
@@ -256,16 +214,12 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
 
                 let edge_length = end - start;
 
-                // println!("{} {}",start, end);
                 self.dfs(Rc::clone(child), depth + edge_length ,result);
             }
         }
     }
 
     fn bfs_print(&self, node: Rc<Node<'a, T>>, node_depth: usize, depth: usize) {
-        let idx = node.start_idx.borrow().clone();
-        println!("{}{} {}", " ".repeat(node_depth*4),depth, self.sequence[idx]);
-
         for child in node.children.borrow().values() {
             let start = *child.start_idx.borrow();
             let end = {
@@ -290,7 +244,6 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
 
         let mut depth = 0;
         loop {
-            println!("{} {}", pattern_start, pattern.len());
             let child = {
                 let children = node.children.borrow();
                 if let Some(child) = children.get(pattern.get(pattern_start).unwrap()) {
@@ -311,7 +264,6 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
             depth += seq_len;
 
             let (seq_end, pattern_end, walk_down) = {
-                println!("{} {} {}", pattern_start, seq_len, pattern.len());
                 if pattern.len() - pattern_start > seq_len  {
                     (seq_end, pattern_start + seq_len, true)
                 } else {
@@ -319,20 +271,8 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
                 }
             };
 
-
-
             let subseq = self.sequence[seq_start..seq_end].iter();
             let sub_pattern = pattern[pattern_start..pattern_end].iter();
-
-            for t in self.sequence[seq_start..seq_end].iter() {
-                print!("{}", t);
-            };
-            println!("");
-
-            for t in pattern[pattern_start..pattern_end].iter() {
-                print!("{}", t);
-            };
-            println!("");
 
             if subseq.copied().eq(sub_pattern) {
                 if walk_down {
@@ -346,7 +286,6 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
             break;
 
         }
-        println!("");
         result
     }
 }
