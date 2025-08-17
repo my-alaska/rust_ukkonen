@@ -10,7 +10,6 @@ pub struct Node<'a, T> {
     pub special_link: RefCell<Option<Rc<Node<'a, T>>>>,
     pub start_idx: RefCell<usize>,
     pub end_idx: Option<usize>,
-    pub leaf_index: Option<isize>,
 }
 
 impl<'a, T: Eq + Hash> Node<'a, T> {
@@ -20,7 +19,6 @@ impl<'a, T: Eq + Hash> Node<'a, T> {
             special_link: RefCell::new(None),
             start_idx: RefCell::new(start_idx),
             end_idx: None,
-            leaf_index: None,
         }
     }
 }

@@ -21,14 +21,11 @@ pub struct UkkonenTree<'a, T> {
     sequence: Vec<&'a T>,
 }
 
-
 impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
     pub fn new(sequence: &'a [T]) -> Self {
 
         // Create a root node
-        let mut root = Node::new(0);
-        root.leaf_index = Some(0);
-        let root = Rc::new(root);
+        let root = Rc::new(Node::new(0));
 
         // Initialise the tree object
         let mut tree = Self {
@@ -53,19 +50,17 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
 
         let children = self.active_node.children.borrow();
 
-        if !children.contains_key(element) {
-            return false;
-        }
+        if !children.contains_key(element) { return false; }
 
         let active_child = Rc::clone(children.get(&element).unwrap());
         // Drop the borrow to children explicitly.
         // Otherwise compiler won't let us assign the active node
         drop(children);
 
-        let edge_length = active_child.end_idx.unwrap() - *active_child.start_idx.borrow();
+        if let Some(end_idx) = active_child.end_idx{
+            let edge_length = end_idx - *active_child.start_idx.borrow();
+            if self.active_length >= edge_length {
 
-        if self.active_length >= edge_length {
-            if let Some(_) = active_child.end_idx{
                 self.active_edge = Some(self.active_edge.unwrap() + edge_length);
                 self.active_length -= edge_length;
                 self.active_node = active_child;
@@ -73,7 +68,6 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
                 return true
             }
         }
-
         false
     }
 
@@ -107,25 +101,23 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
         // It's the number of characters to process or implicitly stored
         self.remainder += 1;
         while self.remainder > 0 {
-
-            // If the active node doesn't have edge corresponding to our letter
             if self.active_length == 0 {
-
                 // If active length is 0 we select active edge
                 self.active_edge = Some(self.sequence.len() - 1);
+            }
 
-                // If active node has no edge corresponding to `element`...
-                if !self.active_node.children.borrow().contains_key(element)  {
-                    // create a new child node and edge that does
+            // If the active node doesn't have edge corresponding to our letter
+            if self.active_length == 0 && !self.active_node.children.borrow().contains_key(element){
+                // create a new child node and edge that does
 
-                    // initialize node
-                    let new_node = Node::new(self.sequence.len() - 1);
-                    let new_node = Rc::new(new_node);
+                // initialize node
+                let new_node = Node::new(self.sequence.len() - 1);
+                let new_node = Rc::new(new_node);
 
-                    // and input it as a child into the active node.
-                    // We need to borrow a mutable reference to the children hashmap
-                    self.active_node.children.borrow_mut().insert(element, new_node);
-                }
+                // and input it as a child into the active node.
+                // We need to borrow a mutable reference to the children hashmap
+                self.active_node.children.borrow_mut().insert(element, new_node);
+
 
                 // If new node was created in previous iterations
                 // create a special link from it to current active node
@@ -136,21 +128,23 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
 
             // If there is active length
             } else {
+
                 // check if we can "walk down" - active length is greater than the length of edge below
                 // If we walk down we have to process the beginning of the loop
                 if self.walk_down() { continue }
 
                 // extract the child at the end of the active edge. It has some important information
-                let children_ref = self.active_node.children.borrow_mut();
-                let active_child = children_ref.get(element).unwrap();
+                let mut children_ref = self.active_node.children.borrow_mut();
+                let active_edge_element = self.sequence[self.active_edge.unwrap()];
+                let active_child = children_ref.get(active_edge_element).unwrap();
 
                 // In case our new letter is already implicitly represented on the active edge
                 // We want to update active length (and create a link if need be)
                 // We break out of the loop here. It's the default case of implicit extension
+
                 if self.sequence[*active_child.start_idx.borrow() + self.active_length] == element {
                     // Update link of last_created_node
                     self.link_created_node(last_created_node,self.active_node.clone());
-
                     self.active_length += 1;
                     break;
                 }
@@ -175,20 +169,21 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
 
                 // Assign the new node as child of active_node
                 let break_path_node = Rc::new(break_path_node);
-                self.active_node.children.borrow_mut().insert(self.sequence[new_node_start], Rc::clone(&break_path_node));
+                children_ref.insert(self.sequence[new_node_start], Rc::clone(&break_path_node));
 
                 // check if there was already a new node created in this tree extension step.
                 // If it was, we have to link the new node to it
                 self.link_created_node(last_created_node, Rc::clone(&break_path_node));
                 last_created_node = Some(break_path_node);
             }
+            drop(self.active_node.children.borrow_mut());
 
             self.remainder -= 1;
 
             // If root is the active node at this point it means we inserted a new node or leaf from it
 
             // If root is the active edge, and the active length is nonzero:
-            if !Rc::ptr_eq(&self.root, &self.active_node) {
+            if Rc::ptr_eq(&self.root, &self.active_node) && self.active_length > 0{
                 // Select the active edge on the root using the 2nd character of active sequence
                 self.active_edge = Some(self.sequence.len() - self.remainder);
 
@@ -201,24 +196,48 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
         }
     }
 
-    fn dfs(&self, node: Rc<Node<'a, T>>, result: &mut Vec<usize>){
+    fn dfs(&self, node: Rc<Node<'a, T>>, depth: usize,result: &mut Vec<usize>){
         if node.children.borrow().len() == 0 {
-            result.push(node.start_idx.borrow().clone());
+            result.push(self.sequence.len() - depth);
         } else {
             for child in node.children.borrow().values() {
-                self.dfs(Rc::clone(child), result);
+
+                let start = *child.start_idx.borrow();
+                let end = {
+                    if let Some(end) = child.end_idx {
+                        end
+                    } else {
+                        self.sequence.len()
+                    }
+                };
+
+                let edge_length = end - start;
+
+                self.dfs(Rc::clone(child), depth + edge_length ,result);
             }
         }
     }
 
-    fn bfs_print(&self, node: Rc<Node<'a, T>>, depth: usize) {
+    fn bfs_print(&self, node: Rc<Node<'a, T>>, node_depth: usize, depth: usize) {
         let idx = node.start_idx.borrow().clone();
-        println!("{}{}", " ".repeat(depth*4), self.sequence[idx]);
+        println!("{}{} {}", " ".repeat(node_depth*4),self.sequence[idx], depth);
 
-        println!("{}{}", " ".repeat(depth*4), node.children.borrow().len());
         for child in node.children.borrow().values() {
-            self.bfs_print(Rc::clone(child), depth + 1);
+            let start = *child.start_idx.borrow();
+            let end = {
+                if let Some(end) = child.end_idx {
+                    end
+                } else {
+                    self.sequence.len()
+                }
+            };
+            let edge_length = end - start;
+            self.bfs_print(Rc::clone(child), node_depth + 1, depth + edge_length);
         }
+    }
+
+    pub fn print_tree(&self) {
+        self.bfs_print(Rc::clone(&self.root), 0, 0);
     }
 
     pub fn find(&self, pattern: &[T]) -> Vec<usize> {
@@ -227,28 +246,18 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
         let mut node = Rc::clone(&self.root);
         let mut pattern_start = 0;
 
-        self.bfs_print(Rc::clone(&node), 0);
-
+        let mut depth = 0;
         loop {
-            // println!("{}", pattern_start);
             let child = {
                 let children = node.children.borrow();
-                // for child in children.values() {
-                //     print!("{} ", self.sequence[child.start_idx.borrow().clone()]);
-                // }
                 if let Some(child) = children.get(pattern.get(pattern_start).unwrap()) {
-                    Some(Rc::clone(child))
+                    Rc::clone(child)
                 } else {
-                    None
+                    break
                 }
             };
 
-            if let None = child { break; }
-
-            let child = child.unwrap();
-
             let seq_start = child.start_idx.borrow().clone();
-
 
             let seq_end = match child.end_idx {
                 Some(end) => end,
@@ -256,31 +265,31 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
             };
 
             let seq_len = seq_end - seq_start;
+            depth += seq_len;
 
-            let (pattern_end, walk_down) = {
-                if pattern_start + seq_len < pattern.len() {
-                    (seq_start + seq_len, true)
+            let (seq_end, pattern_end, walk_down) = {
+                if pattern.len() - pattern_start > seq_len  {
+                    (seq_end, pattern_start + seq_len, true)
                 } else {
-                    (pattern.len(), false)
+                    (seq_start + pattern.len() - pattern_start,pattern.len(), false)
                 }
             };
 
-            let subseq = self.sequence[seq_start..seq_end].iter().copied();
+            let subseq = self.sequence[seq_start..seq_end].iter();
             let sub_pattern = pattern[pattern_start..pattern_end].iter();
 
-            if subseq.eq(sub_pattern) {
+            if subseq.copied().eq(sub_pattern) {
                 if walk_down {
                     node = child;
                     pattern_start += seq_len;
                     continue
                 }
-                self.dfs(child, &mut result);
+                self.dfs(child, depth,&mut result);
             }
 
             break;
 
         }
-        println!("");
         result
     }
 }
