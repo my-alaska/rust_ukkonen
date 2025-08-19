@@ -218,7 +218,7 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
         }
     }
 
-    fn bfs_print(&self, node: Rc<Node<'a, T>>, node_depth: usize, depth: usize) {
+    fn dfs_print(&self, node: Rc<Node<'a, T>>, node_depth: usize, depth: usize) {
         let idx = node.start_idx.borrow().clone();
         println!("{}{} {}", " ".repeat(node_depth*4),self.sequence[idx], depth);
 
@@ -232,12 +232,12 @@ impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
                 }
             };
             let edge_length = end - start;
-            self.bfs_print(Rc::clone(child), node_depth + 1, depth + edge_length);
+            self.dfs_print(Rc::clone(child), node_depth + 1, depth + edge_length);
         }
     }
 
     pub fn print_tree(&self) {
-        self.bfs_print(Rc::clone(&self.root), 0, 0);
+        self.dfs_print(Rc::clone(&self.root), 0, 0);
     }
 
     pub fn find(&self, pattern: &[T]) -> Vec<usize> {
