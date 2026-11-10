@@ -1,295 +1,350 @@
+//! Suffix tree built on-line with Ukkonen's algorithm.
+//!
+//! ```
+//! use rust_ukkonen::UkkonenTree;
+//!
+//! let text: Vec<char> = "banana".chars().collect();
+//! let tree = UkkonenTree::new(&text);
+//!
+//! let pattern: Vec<char> = "ana".chars().collect();
+//! assert_eq!(tree.find(&pattern), vec![1, 3]);
+//! ```
+//! The algorithm reads the sequence from the start and keeps the suffix tree of
+//! the prefix read so far:
+//!
+//! 1. **Open leaf edges.** A leaf edge ends at the end of the sequence, so all
+//!    leaves grow by one element for free.
+//! 2. **Active point and remainder.** A suffix that occurs earlier in the
+//!    sequence is *implicit*: it ends inside an edge, not at a leaf. `remainder`
+//!    counts them and the *active point* marks where the longest one ends.
+//! 3. **Suffix links.** The internal node spelling `c` followed by `s` links to
+//!    the node spelling `s`, so moving to the next shorter suffix is a jump,
+//!    not a walk from the root.
+
 mod node;
 
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::hash::Hash;
-use crate::node::Node;
 
-use std::rc::{Rc};
+use crate::node::{Node, NodeId};
 
-// internal tree representation
+/// The root is always the first node pushed into the arena.
+const ROOT: NodeId = NodeId(0);
+
+/// Suffix tree of a sequence. Borrows the elements instead of copying them.
+#[derive(Debug)]
 pub struct UkkonenTree<'a, T> {
+    /// Arena of nodes; nodes refer to each other by index.
+    nodes: Vec<Node<'a, T>>,
 
-    // Nodes can have multiple references so we use Rc.
-    root: Rc<Node<'a, T>>,
-    active_node: Rc<Node<'a, T>>,
+    /// Elements read so far. Edge labels are ranges into this sequence.
+    sequence: Vec<&'a T>,
 
-    remainder:usize,
-
-    active_edge: Option<usize>, // flag that tells as what edge of the tree we're processing
+    // Active point: where the longest implicit suffix ends. It lies
+    // `active_length` elements down the edge out of `active_node` whose label
+    // starts with `sequence[active_edge]`.
+    active_node: NodeId,
+    active_edge: usize,
     active_length: usize,
 
-    sequence: Vec<&'a T>,
+    /// Number of suffixes that are still implicit (have no leaf yet).
+    remainder: usize,
 }
 
-impl<'a, T: Eq + Hash + Display> UkkonenTree<'a, T> {
+impl<'a, T: Eq + Hash> UkkonenTree<'a, T> {
+    /// Builds the suffix tree of `sequence`, one element at a time.
+    #[must_use]
     pub fn new(sequence: &'a [T]) -> Self {
-
-        // Create a root node
-        let root = Rc::new(Node::new(0));
-
-        // Initialise the tree object
-        let mut tree = Self {
-            root: root.clone(),
-            active_node: root,
-            remainder: 0,
-            active_edge: None,
+        let mut tree: UkkonenTree<'_, T> = Self {
+            // The root has no incoming edge, so its label is empty.
+            nodes: vec![Node::new(0, Some(0))],
+            sequence: Vec::with_capacity(sequence.len()),
+            active_node: ROOT,
+            active_edge: 0,
             active_length: 0,
-            sequence: Vec::new(),
+            remainder: 0,
         };
 
-        // We're "streaming" the data into the tree
-        for element in sequence {
-            tree.extend_tree(&element);
-        }
-
+        // We're "streaming" the data into the tree, one element (phase) at a time.
+        tree.extend(sequence);
         tree
     }
 
-    fn walk_down(&mut self) -> bool {
-        let element = self.sequence[self.active_edge.unwrap()];
-
-        let children = self.active_node.children.borrow();
-
-        if !children.contains_key(element) { return false; }
-
-        let active_child = Rc::clone(children.get(&element).unwrap());
-        // Drop the borrow to children explicitly.
-        // Otherwise compiler won't let us assign the active node
-        drop(children);
-
-        if let Some(end_idx) = active_child.end_idx{
-            let edge_length = end_idx - *active_child.start_idx.borrow();
-            if self.active_length >= edge_length {
-
-                self.active_edge = Some(self.active_edge.unwrap() + edge_length);
-                self.active_length -= edge_length;
-                self.active_node = active_child;
-
-                return true
-            }
-        }
-        false
-    }
-
-    // This function can be used to link the last_created_node to active node
-    // We do this check in a few places during tree extension
-    fn link_created_node(&self, last_created_node: Option<Rc<Node<'a, T>>>, node_to_link: Rc<Node<'a, T>>) -> Option<Rc<Node<'a, T>>> {
-        last_created_node.map(|new_node| {
-            new_node.special_link.replace(Some(node_to_link));
-            new_node
-        })
-    }
-
-    fn update_active_node(&mut self) {
-        let linked_node = &self.active_node.special_link.borrow_mut().take();
-
-        if let Some(linked_node) = linked_node {
-            self.active_node = Rc::clone(&linked_node);
-        } else {
-            self.active_node = Rc::clone(&self.root);
-        }
-    }
-
-    // This method can be used to extend existing tree with new elements
+    /// Appends one element: one phase of the algorithm, amortised O(1).
     pub fn extend_tree(&mut self, element: &'a T) {
+        let new_pos: usize = self.sequence.len();
         self.sequence.push(element);
-
-        // initialize the checker for the most recently created node
-        let mut last_created_node : Option<Rc<Node<T>>> = None;
-
-        // Since there is one new element, we increase remainder by one
-        // It's the number of characters to process or implicitly stored
         self.remainder += 1;
+
+        // Internal node created earlier in this phase whose suffix link is not set yet.
+        let mut awaiting_link: Option<NodeId> = None;
+
         while self.remainder > 0 {
+            // Active point sits on a node: look for an edge starting with the new element.
             if self.active_length == 0 {
-                // If active length is 0 we select active edge
-                self.active_edge = Some(self.sequence.len() - 1);
+                self.active_edge = new_pos;
             }
 
-            // If the active node doesn't have edge corresponding to our letter
-            if self.active_length == 0 && !self.active_node.children.borrow().contains_key(element){
-                // create a new child node and edge that does
+            let edge_first: &T = self.sequence[self.active_edge];
 
-                // initialize node
-                let new_node = Node::new(self.sequence.len() - 1);
-                let new_node = Rc::new(new_node);
-
-                // and input it as a child into the active node.
-                // We need to borrow a mutable reference to the children hashmap
-                self.active_node.children.borrow_mut().insert(element, new_node);
-
-
-                // If new node was created in previous iterations
-                // create a special link from it to current active node
-                if !Rc::ptr_eq(&self.root, &self.active_node){
-                    self.link_created_node(last_created_node, self.active_node.clone());
-                    last_created_node = None;
+            // Check if the active edge exists: either no edge out of the active node
+            // starts with `edge_first` (None), or there is one leading to another node (Some).
+            match self
+                .node(self.active_node)
+                .children
+                .get(edge_first)
+                .copied()
+            {
+                None => {
+                    // No such edge: the suffix ends at the active node, so add a leaf there.
+                    let leaf: NodeId = self.add_node(Node::new(new_pos, None));
+                    self.node_mut(self.active_node)
+                        .children
+                        .insert(element, leaf);
+                    self.set_suffix_link(awaiting_link.take(), self.active_node);
                 }
+                Some(child) => {
+                    // Skip/count: the active point is past this edge, so move down to `child`.
+                    let label_len: usize = self.label_len(child);
+                    if self.active_length >= label_len {
+                        self.active_edge += label_len;
+                        self.active_length -= label_len;
+                        self.active_node = child;
+                        continue;
+                    }
 
-            // If there is active length
-            } else {
+                    let label_start: usize = self.node(child).label_start;
+                    if self.sequence[label_start + self.active_length] == element {
+                        // The element is already on the edge: this suffix and all
+                        // shorter ones stay implicit, so the phase ends.
+                        self.set_suffix_link(awaiting_link.take(), self.active_node);
+                        self.active_length += 1;
+                        break;
+                    }
 
-                // check if we can "walk down" - active length is greater than the length of edge below
-                // If we walk down we have to process the beginning of the loop
-                if self.walk_down() { continue }
+                    // Mismatch inside the edge: split it at the active point and add a leaf.
+                    //
+                    //   active_node --[label_start..split_pos)--> split --[split_pos..)--> child
+                    //                                                   \--[new_pos..)----> leaf
+                    let split_pos: usize = label_start + self.active_length;
+                    let split: NodeId = self.add_node(Node::new(label_start, Some(split_pos)));
+                    let leaf: NodeId = self.add_node(Node::new(new_pos, None));
 
-                // extract the child at the end of the active edge. It has some important information
-                let mut children_ref = self.active_node.children.borrow_mut();
-                let active_edge_element = self.sequence[self.active_edge.unwrap()];
-                let active_child = children_ref.get(active_edge_element).unwrap();
+                    // Child keys are the first elements of the new edge labels.
+                    let split_key: &T = self.sequence[label_start];
+                    let child_key: &T = self.sequence[split_pos];
 
-                // In case our new letter is already implicitly represented on the active edge
-                // We want to update active length (and create a link if need be)
-                // We break out of the loop here. It's the default case of implicit extension
+                    let split_node: &mut Node<'_, T> = self.node_mut(split);
+                    split_node.children.insert(element, leaf);
+                    split_node.children.insert(child_key, child);
+                    self.node_mut(child).label_start = split_pos;
+                    self.node_mut(self.active_node)
+                        .children
+                        .insert(split_key, split);
 
-                if self.sequence[*active_child.start_idx.borrow() + self.active_length] == element {
-                    // Update link of last_created_node
-                    self.link_created_node(last_created_node,self.active_node.clone());
-                    self.active_length += 1;
-                    break;
+                    // Link the previous waiting node to `split`; `split` now waits for its own link.
+                    self.set_suffix_link(awaiting_link.replace(split), split);
                 }
-
-                // Otherwise we have to break the path
-
-                // create a new node with proper beginning and ending index
-                let new_node_start = *active_child.start_idx.borrow();
-                let new_node_end = new_node_start + self.active_length;
-                let mut break_path_node: Node<T> = Node::new(new_node_start);
-                break_path_node.end_idx = Some(new_node_end);
-
-                // Modify active child start index
-                active_child.start_idx.replace(new_node_end);
-                // Create a new child
-                let new_node = Rc::new(Node::new(self.sequence.len() - 1));
-
-                let mut break_path_children = break_path_node.children.borrow_mut();
-                break_path_children.insert(self.sequence[break_path_node.end_idx.unwrap()], Rc::clone(&active_child));
-                break_path_children.insert(element, new_node);
-                drop(break_path_children);
-
-                // Assign the new node as child of active_node
-                let break_path_node = Rc::new(break_path_node);
-                children_ref.insert(self.sequence[new_node_start], Rc::clone(&break_path_node));
-
-                // check if there was already a new node created in this tree extension step.
-                // If it was, we have to link the new node to it
-                self.link_created_node(last_created_node, Rc::clone(&break_path_node));
-                last_created_node = Some(break_path_node);
             }
-            drop(self.active_node.children.borrow_mut());
 
+            // The suffix now ends at a leaf.
             self.remainder -= 1;
 
-            // If root is the active node at this point it means we inserted a new node or leaf from it
-
-            // If root is the active edge, and the active length is nonzero:
-            if Rc::ptr_eq(&self.root, &self.active_node) && self.active_length > 0{
-                // Select the active edge on the root using the 2nd character of active sequence
-                self.active_edge = Some(self.sequence.len() - self.remainder);
-
-                // since active sequence is now shorter we decrease active length
-                self.active_length -= 1;
-            }
-
-            // Update current active node with links or reset it to root
-            self.update_active_node();
-        }
-    }
-
-    fn dfs(&self, node: Rc<Node<'a, T>>, depth: usize,result: &mut Vec<usize>){
-        if node.children.borrow().len() == 0 {
-            result.push(self.sequence.len() - depth);
-        } else {
-            for child in node.children.borrow().values() {
-
-                let start = *child.start_idx.borrow();
-                let end = {
-                    if let Some(end) = child.end_idx {
-                        end
-                    } else {
-                        self.sequence.len()
-                    }
-                };
-
-                let edge_length = end - start;
-
-                self.dfs(Rc::clone(child), depth + edge_length ,result);
-            }
-        }
-    }
-
-    fn dfs_print(&self, node: Rc<Node<'a, T>>, node_depth: usize, depth: usize) {
-        let idx = node.start_idx.borrow().clone();
-        println!("{}{} {}", " ".repeat(node_depth*4),self.sequence[idx], depth);
-
-        for child in node.children.borrow().values() {
-            let start = *child.start_idx.borrow();
-            let end = {
-                if let Some(end) = child.end_idx {
-                    end
-                } else {
-                    self.sequence.len()
+            // Move the active point to the next shorter suffix: at the root, drop
+            // its first element; elsewhere, follow the suffix link.
+            if self.active_node == ROOT {
+                if self.active_length > 0 {
+                    self.active_length -= 1;
+                    self.active_edge = new_pos + 1 - self.remainder;
                 }
-            };
-            let edge_length = end - start;
-            self.dfs_print(Rc::clone(child), node_depth + 1, depth + edge_length);
+            } else {
+                self.active_node = self.node(self.active_node).suffix_link.unwrap_or(ROOT);
+            }
         }
     }
 
-    pub fn print_tree(&self) {
-        self.dfs_print(Rc::clone(&self.root), 0, 0);
-    }
-
+    /// Positions of all occurrences of `pattern`, in ascending order.
+    #[must_use]
     pub fn find(&self, pattern: &[T]) -> Vec<usize> {
-        let mut result = Vec::new();
+        let Some((node, depth)) = self.locate(pattern) else {
+            return Vec::new();
+        };
 
-        let mut node = Rc::clone(&self.root);
-        let mut pattern_start = 0;
-
-        let mut depth = 0;
-        loop {
-            let child = {
-                let children = node.children.borrow();
-                if let Some(child) = children.get(pattern.get(pattern_start).unwrap()) {
-                    Rc::clone(child)
-                } else {
-                    break
+        // Each leaf below the node is a suffix starting with `pattern`.
+        // `depth` counts the elements on the path from the root, so a leaf at
+        // depth d is the suffix starting at `sequence.len() - d`.
+        let mut positions: Vec<usize> = Vec::new();
+        let mut stack = vec![(node, depth)];
+        while let Some((id, depth)) = stack.pop() {
+            if self.node(id).is_leaf() {
+                // A root without children means an empty tree.
+                if id != ROOT {
+                    positions.push(self.sequence.len() - depth);
                 }
-            };
+            } else {
+                stack.extend(
+                    self.node(id)
+                        .children
+                        .values()
+                        .map(|&child| (child, depth + self.label_len(child))),
+                );
+            }
+        }
+        positions.sort_unstable();
 
-            let seq_start = child.start_idx.borrow().clone();
+        // Implicit suffixes have no leaf. They are the last `remainder`
+        // suffixes, so their matches are the occurrences inside that tail.
+        let implicit_start: usize = self.sequence.len() - self.remainder;
+        let tail: &[&T] = &self.sequence[implicit_start..];
+        positions.extend(
+            kmp_find(tail, pattern)
+                .into_iter()
+                .map(|offset| implicit_start + offset),
+        );
+        positions
+    }
 
-            let seq_end = match child.end_idx {
-                Some(end) => end,
-                None => self.sequence.len()
-            };
+    /// Follows `pattern` down from the root. Returns the node at or just below
+    /// its end and that node's depth, or `None` if `pattern` does not occur.
+    fn locate(&self, pattern: &[T]) -> Option<(NodeId, usize)> {
+        let mut node: NodeId = ROOT;
+        let mut depth: usize = 0;
+        let mut matched: usize = 0;
 
-            let seq_len = seq_end - seq_start;
-            depth += seq_len;
+        while let Some(next_element) = pattern.get(matched) {
+            let child: NodeId = *self.node(node).children.get(next_element)?;
+            let label_start: usize = self.node(child).label_start;
+            let label_len: usize = self.label_len(child);
+            // The pattern may end partway along this edge.
+            let compared: usize = label_len.min(pattern.len() - matched);
 
-            let (seq_end, pattern_end, walk_down) = {
-                if pattern.len() - pattern_start > seq_len  {
-                    (seq_end, pattern_start + seq_len, true)
-                } else {
-                    (seq_start + pattern.len() - pattern_start,pattern.len(), false)
-                }
-            };
-
-            let subseq = self.sequence[seq_start..seq_end].iter();
-            let sub_pattern = pattern[pattern_start..pattern_end].iter();
-
-            if subseq.copied().eq(sub_pattern) {
-                if walk_down {
-                    node = child;
-                    pattern_start += seq_len;
-                    continue
-                }
-                self.dfs(child, depth,&mut result);
+            let label: &[&T] = &self.sequence[label_start..label_start + compared];
+            let rest: &[T] = &pattern[matched..matched + compared];
+            if !label.iter().copied().eq(rest) {
+                return None;
             }
 
-            break;
-
+            node = child;
+            depth += label_len;
+            matched += compared;
         }
-        result
+        Some((node, depth))
     }
+
+    /// Sets the suffix link of `from` to `to`; does nothing if `from` is `None`.
+    ///
+    /// A new internal node only learns its link target when the algorithm
+    /// reaches the next shorter suffix, so `from` is the node waiting for it.
+    fn set_suffix_link(&mut self, from: Option<NodeId>, to: NodeId) {
+        if let Some(from) = from {
+            self.node_mut(from).suffix_link = Some(to);
+        }
+    }
+}
+
+impl<'a, T> UkkonenTree<'a, T> {
+    fn node(&self, id: NodeId) -> &Node<'a, T> {
+        &self.nodes[id.0]
+    }
+
+    fn node_mut(&mut self, id: NodeId) -> &mut Node<'a, T> {
+        &mut self.nodes[id.0]
+    }
+
+    /// Stores `node` in the arena and returns its ID.
+    fn add_node(&mut self, node: Node<'a, T>) -> NodeId {
+        self.nodes.push(node);
+        NodeId(self.nodes.len() - 1)
+    }
+
+    /// Exclusive end of the label of the edge into `id`; for a leaf, the
+    /// current end of the sequence.
+    fn label_end(&self, id: NodeId) -> usize {
+        self.node(id).label_end.unwrap_or(self.sequence.len())
+    }
+
+    /// Number of elements on the edge into `id`.
+    fn label_len(&self, id: NodeId) -> usize {
+        self.label_end(id) - self.node(id).label_start
+    }
+}
+
+impl<T: Display> UkkonenTree<'_, T> {
+    /// Prints the tree to stdout in the format of the `Display` impl.
+    pub fn print_tree(&self) {
+        print!("{self}");
+    }
+}
+
+/// Appends the elements one by one, as [`UkkonenTree::extend_tree`] does.
+impl<'a, T: Eq + Hash> Extend<&'a T> for UkkonenTree<'a, T> {
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
+        for element in iter {
+            self.extend_tree(element);
+        }
+    }
+}
+
+/// One edge label per line, indented by the edge's depth in the tree.
+impl<T: Display> Display for UkkonenTree<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut stack: Vec<(NodeId, usize)> = self
+            .node(ROOT)
+            .children
+            .values()
+            .map(|&id| (id, 0))
+            .collect();
+        while let Some((id, level)) = stack.pop() {
+            write!(f, "{}", "    ".repeat(level))?;
+            for element in &self.sequence[self.node(id).label_start..self.label_end(id)] {
+                write!(f, "{element}")?;
+            }
+            writeln!(f)?;
+            stack.extend(
+                self.node(id)
+                    .children
+                    .values()
+                    .map(|&child| (child, level + 1)),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Start offsets of `pattern` in `text` (Knuth-Morris-Pratt).
+fn kmp_find<T: Eq>(text: &[&T], pattern: &[T]) -> Vec<usize> {
+    if pattern.is_empty() {
+        return (0..text.len()).collect();
+    }
+
+    // border[i]: length of the longest proper prefix of `pattern[..=i]`
+    // that is also its suffix.
+    let mut border = vec![0; pattern.len()];
+    let mut matched: usize = 0;
+    for i in 1..pattern.len() {
+        while matched > 0 && pattern[i] != pattern[matched] {
+            matched = border[matched - 1];
+        }
+        if pattern[i] == pattern[matched] {
+            matched += 1;
+        }
+        border[i] = matched;
+    }
+
+    // Scan `text`; on a mismatch, fall back along `border` instead of restarting.
+    let mut offsets = Vec::new();
+    let mut matched = 0;
+    for (i, &element) in text.iter().enumerate() {
+        while matched > 0 && *element != pattern[matched] {
+            matched = border[matched - 1];
+        }
+        if *element == pattern[matched] {
+            matched += 1;
+        }
+        if matched == pattern.len() {
+            offsets.push(i + 1 - matched);
+            matched = border[matched - 1];
+        }
+    }
+    offsets
 }

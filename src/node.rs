@@ -1,24 +1,38 @@
 use std::collections::HashMap;
-use std::hash::Hash;
 
-use std::cell::RefCell;
-use std::rc::{Rc};
+/// Index of a node in `UkkonenTree::nodes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NodeId(pub(crate) usize);
 
+/// A node together with the edge leading into it from its parent.
+/// The edge is labelled `sequence[label_start..label_end]`.
+#[derive(Debug)]
+pub(crate) struct Node<'a, T> {
+    pub(crate) label_start: usize,
 
-pub struct Node<'a, T> {
-    pub children: RefCell<HashMap<&'a T, Rc<Node<'a, T>>>>,
-    pub special_link: RefCell<Option<Rc<Node<'a, T>>>>,
-    pub start_idx: RefCell<usize>,
-    pub end_idx: Option<usize>,
+    /// Exclusive end of the label. `None` for leaves: their edge always runs
+    /// to the current end of the sequence, so it grows as elements are added.
+    pub(crate) label_end: Option<usize>,
+
+    /// Outgoing edges, keyed by the first element of their label.
+    pub(crate) children: HashMap<&'a T, NodeId>,
+
+    /// For an internal node spelling `c` followed by `s`: the node spelling `s`.
+    pub(crate) suffix_link: Option<NodeId>,
 }
 
-impl<'a, T: Eq + Hash> Node<'a, T> {
-    pub fn new(start_idx: usize) -> Self {
+impl<T> Node<'_, T> {
+    /// A node with no children and no suffix link.
+    pub(crate) fn new(label_start: usize, label_end: Option<usize>) -> Self {
         Self {
-            children: RefCell::new(HashMap::new()),
-            special_link: RefCell::new(None),
-            start_idx: RefCell::new(start_idx),
-            end_idx: None,
+            label_start,
+            label_end,
+            children: HashMap::new(),
+            suffix_link: None,
         }
+    }
+
+    pub(crate) fn is_leaf(&self) -> bool {
+        self.children.is_empty()
     }
 }

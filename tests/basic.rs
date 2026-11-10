@@ -4,12 +4,12 @@ use rust_ukkonen::UkkonenTree;
 #[test]
 fn basic_string_search() {
     let text: Vec<char> = "babcababx".chars().collect();
-    let st = UkkonenTree::new(&text);
-    st.print_tree();
+    let tree = UkkonenTree::new(&text);
+    tree.print_tree();
 
     let pattern: Vec<char> = "ab".chars().collect();
 
-    let matches: HashSet<usize> = st.find(&pattern).iter().copied().collect();
+    let matches: HashSet<usize> = tree.find(&pattern).iter().copied().collect();
     assert_eq!(matches, HashSet::from([1, 4, 6]));
 
 }
@@ -17,20 +17,20 @@ fn basic_string_search() {
 #[test]
 fn missing_pattern() {
     let text: Vec<char> = "bananas".chars().collect();
-    let st = UkkonenTree::new(&text);
+    let tree = UkkonenTree::new(&text);
 
     let pattern: Vec<char> = "xyz".chars().collect();
 
-    let matches: HashSet<usize> = st.find(&pattern).iter().copied().collect();
+    let matches: HashSet<usize> = tree.find(&pattern).iter().copied().collect();
     assert_eq!(matches, HashSet::new());
 }
 
 #[test]
 fn works_on_numbers() {
     let nums = vec![1, 2, 3, 2, 3, 4];
-    let st = UkkonenTree::new(&nums);
+    let tree = UkkonenTree::new(&nums);
 
-    let matches: HashSet<usize> = st.find(&[2, 3]).iter().copied().collect();
+    let matches: HashSet<usize> = tree.find(&[2, 3]).iter().copied().collect();
 
     assert_eq!(matches, HashSet::from([1, 3]));
 }
